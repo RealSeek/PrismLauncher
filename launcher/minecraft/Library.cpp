@@ -42,6 +42,56 @@
 #include <net/ApiDownload.h>
 #include <net/ChecksumValidator.h>
 
+#include "Application.h"
+
+namespace {
+
+/**
+ * @brief Normalize a base URL to ensure it ends with a trailing slash.
+ */
+QString normalizeBaseUrl(const QString& url)
+{
+    QString result = url.trimmed();
+    if (!result.isEmpty() && !result.endsWith('/')) {
+        result += '/';
+    }
+    return result;
+}
+
+/**
+ * @brief Rewrite a library download URL using the given mirror base.
+ *
+ * Only rewrites URLs that match known official Minecraft/Forge/Fabric/NeoForge
+ * library prefixes. Unknown URLs are returned unchanged.
+ */
+QString rewriteLibraryUrl(const QString& url, const QString& mirrorBase)
+{
+    if (mirrorBase.isEmpty()) {
+        return url;
+    }
+
+    // Known official library/maven/download URL prefixes
+    static const QStringList knownPrefixes = {
+        QStringLiteral("https://libraries.minecraft.net/"),
+        QStringLiteral("https://maven.minecraftforge.net/"),
+        QStringLiteral("https://files.minecraftforge.net/maven/"),
+        QStringLiteral("https://maven.neoforged.net/releases/"),
+        QStringLiteral("https://maven.fabricmc.net/"),
+        QStringLiteral("https://piston-data.mojang.com/"),
+        QStringLiteral("https://launcher.mojang.com/"),
+    };
+
+    for (const auto& prefix : knownPrefixes) {
+        if (url.startsWith(prefix)) {
+            return mirrorBase + url.mid(prefix.size());
+        }
+    }
+
+    return url;
+}
+
+}  // anonymous namespace
+
 /**
  * @brief Collect applicable files for the library.
  *
@@ -114,6 +164,9 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
     bool stale = isAlwaysStale();
     bool local = isLocal();
 
+    // Snapshot the library mirror base URL once for consistent rewriting
+    const QString mirrorBase = normalizeBaseUrl(APPLICATION->settings()->get("LibraryURLOverride").toString());
+
     // Lambda function to check if a local file exists
     auto check_local_file = [overridePath, &failedLocalFiles](QString storage) {
         QFileInfo fileinfo(storage);
@@ -128,10 +181,11 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
     };
 
     // Lambda function to add a download request
-    auto add_download = [this, local, check_local_file, cache, stale, &out](QString storage, QString url, QString sha1) {
+    auto add_download = [this, local, check_local_file, cache, stale, &out, &mirrorBase](QString storage, QString url, QString sha1) {
         if (local) {
             return check_local_file(storage);
         }
+        url = rewriteLibraryUrl(url, mirrorBase);
         auto entry = cache->resolveEntry("libraries", storage);
         if (stale) {
             entry->setStale(true);
@@ -198,7 +252,7 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
             }
         }
     } else {
-        auto raw_dl = [this, raw_storage]() {
+        auto raw_dl = [this, &raw_storage]() {
             if (!m_absoluteURL.isEmpty()) {
                 return m_absoluteURL;
             }

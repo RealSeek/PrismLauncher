@@ -42,6 +42,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QValidator>
@@ -52,6 +53,11 @@
 #include "net/PasteUpload.h"
 #include "settings/SettingsObject.h"
 #include "tools/BaseProfiler.h"
+
+namespace {
+static const QString BMCLAPI_ASSETS = QStringLiteral("https://bmclapi2.bangbang93.com/assets/");
+static const QString BMCLAPI_MAVEN = QStringLiteral("https://bmclapi2.bangbang93.com/maven/");
+}  // namespace
 
 APIPage::APIPage(QWidget* parent) : QWidget(parent), ui(new Ui::APIPage)
 {
@@ -82,8 +88,22 @@ APIPage::APIPage(QWidget* parent) : QWidget(parent), ui(new Ui::APIPage)
 
     ui->metaURL->setPlaceholderText(BuildConfig.META_URL);
     ui->resourceURL->setPlaceholderText(BuildConfig.DEFAULT_RESOURCE_BASE);
+    ui->libraryURL->setPlaceholderText(BuildConfig.LIBRARY_BASE);
     ui->legacyFMLLibsURL->setPlaceholderText(BuildConfig.LEGACY_FMLLIBS_BASE_URL);
     ui->userAgentLineEdit->setPlaceholderText(BuildConfig.USER_AGENT);
+
+    // Download Mirror preset
+    ui->mirrorPreset->addItem(tr("Default"), QStringLiteral("default"));
+    ui->mirrorPreset->addItem(tr("BMCLAPI (China)"), QStringLiteral("bmclapi"));
+    ui->mirrorPreset->addItem(tr("Custom"), QStringLiteral("custom"));
+
+    connect(ui->mirrorPreset, qOverload<int>(&QComboBox::currentIndexChanged), this, &APIPage::onMirrorPresetChanged);
+    // Auto-switch to Custom when user manually edits URL fields
+    connect(ui->resourceURL, &QLineEdit::textEdited, this, &APIPage::onMirrorUrlEdited);
+    connect(ui->libraryURL, &QLineEdit::textEdited, this, &APIPage::onMirrorUrlEdited);
+    connect(ui->legacyFMLLibsURL, &QLineEdit::textEdited, this, &APIPage::onMirrorUrlEdited);
+    // Validate library URL
+    ui->libraryURL->setValidator(new QRegularExpressionValidator(s_validUrlRegExp, ui->libraryURL));
 
     loadSettings();
 
@@ -146,6 +166,8 @@ void APIPage::loadSettings()
     ui->metaRefreshOnLaunchCB->setCheckState(s->get("MetaRefreshOnLaunch").toBool() ? Qt::Checked : Qt::Unchecked);
     QString resourceURL = s->get("ResourceURLOverride").toString();
     ui->resourceURL->setText(resourceURL);
+    QString libraryURL = s->get("LibraryURLOverride").toString();
+    ui->libraryURL->setText(libraryURL);
     QString fmlLibsURL = s->get("LegacyFMLLibsURLOverride").toString();
     ui->legacyFMLLibsURL->setText(fmlLibsURL);
     QString flameKey = s->get("FlameKeyOverride").toString();
@@ -155,6 +177,9 @@ void APIPage::loadSettings()
     QString customUserAgent = s->get("UserAgentOverride").toString();
     ui->userAgentLineEdit->setText(customUserAgent);
     ui->technicClientID->setText(s->get("TechnicClientID").toString());
+
+    // Sync mirror preset combo from current URL values
+    syncMirrorPresetFromUrls();
 }
 
 void APIPage::applySettings()
@@ -168,6 +193,7 @@ void APIPage::applySettings()
     s->set("MSAClientIDOverride", msaClientID);
     QUrl metaURL(ui->metaURL->text());
     QUrl resourceURL(ui->resourceURL->text());
+    QUrl libraryURL(ui->libraryURL->text());
     QUrl fmlLibsURL(ui->legacyFMLLibsURL->text());
 
     auto addRequiredTrailingSlash = [](QUrl& url) {
@@ -179,6 +205,7 @@ void APIPage::applySettings()
     };
     addRequiredTrailingSlash(metaURL);
     addRequiredTrailingSlash(resourceURL);
+    addRequiredTrailingSlash(libraryURL);
     addRequiredTrailingSlash(fmlLibsURL);
 
     auto isLocalhost = [](const QUrl& url) { return url.host() == "localhost" || url.host() == "127.0.0.1" || url.host() == "::1"; };
@@ -191,12 +218,14 @@ void APIPage::applySettings()
 
     upgradeToHTTPS(metaURL);
     upgradeToHTTPS(resourceURL);
+    upgradeToHTTPS(libraryURL);
     upgradeToHTTPS(fmlLibsURL);
 
     s->set("FallbackMRBlockedMods", ui->FallbackMRBlockedMods->checkState());
     s->set("MetaURLOverride", metaURL.toString());
     s->set("MetaRefreshOnLaunch", ui->metaRefreshOnLaunchCB->checkState() == Qt::Checked);
     s->set("ResourceURLOverride", resourceURL.toString());
+    s->set("LibraryURLOverride", libraryURL.toString());
     s->set("LegacyFMLLibsURLOverride", fmlLibsURL.toString());
     QString flameKey = ui->flameKey->text();
     s->set("FlameKeyOverride", flameKey);
@@ -215,4 +244,55 @@ bool APIPage::apply()
 void APIPage::retranslate()
 {
     ui->retranslateUi(this);
+}
+
+void APIPage::onMirrorPresetChanged(int index)
+{
+    QString preset = ui->mirrorPreset->itemData(index).toString();
+    if (preset == QStringLiteral("bmclapi")) {
+        QSignalBlocker b1(ui->resourceURL);
+        QSignalBlocker b2(ui->libraryURL);
+        QSignalBlocker b3(ui->legacyFMLLibsURL);
+        ui->resourceURL->setText(BMCLAPI_ASSETS);
+        ui->libraryURL->setText(BMCLAPI_MAVEN);
+        ui->legacyFMLLibsURL->setText(BMCLAPI_MAVEN);
+    } else if (preset == QStringLiteral("default")) {
+        QSignalBlocker b1(ui->resourceURL);
+        QSignalBlocker b2(ui->libraryURL);
+        QSignalBlocker b3(ui->legacyFMLLibsURL);
+        ui->resourceURL->clear();
+        ui->libraryURL->clear();
+        ui->legacyFMLLibsURL->clear();
+    }
+    // "custom" — do nothing, let user edit freely
+}
+
+void APIPage::onMirrorUrlEdited()
+{
+    // When user manually edits any mirror-related URL, switch preset to Custom
+    QSignalBlocker blocker(ui->mirrorPreset);
+    int customIndex = ui->mirrorPreset->findData(QStringLiteral("custom"));
+    if (customIndex != -1) {
+        ui->mirrorPreset->setCurrentIndex(customIndex);
+    }
+}
+
+void APIPage::syncMirrorPresetFromUrls()
+{
+    QSignalBlocker blocker(ui->mirrorPreset);
+
+    QString resource = ui->resourceURL->text().trimmed();
+    QString library = ui->libraryURL->text().trimmed();
+    QString fmlLibs = ui->legacyFMLLibsURL->text().trimmed();
+
+    bool isBmclapi = (resource == BMCLAPI_ASSETS) && (library == BMCLAPI_MAVEN) && (fmlLibs == BMCLAPI_MAVEN);
+    bool isDefault = resource.isEmpty() && library.isEmpty() && fmlLibs.isEmpty();
+
+    if (isBmclapi) {
+        ui->mirrorPreset->setCurrentIndex(ui->mirrorPreset->findData(QStringLiteral("bmclapi")));
+    } else if (isDefault) {
+        ui->mirrorPreset->setCurrentIndex(ui->mirrorPreset->findData(QStringLiteral("default")));
+    } else {
+        ui->mirrorPreset->setCurrentIndex(ui->mirrorPreset->findData(QStringLiteral("custom")));
+    }
 }

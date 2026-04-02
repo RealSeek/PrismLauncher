@@ -66,6 +66,9 @@ class APIPage : public QWidget, public BasePage {
     void updateBaseURLPlaceholder(int index);
     void loadSettings();
     void applySettings();
+    void onMirrorPresetChanged(int index);
+    void onMirrorUrlEdited();
+    void syncMirrorPresetFromUrls();
 
    private:
     Ui::APIPage* ui;
