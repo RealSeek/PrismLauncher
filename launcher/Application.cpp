@@ -890,6 +890,9 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
             // Resource URL
             resetIfInvalid(m_settings->registerSetting({ "ResourceURLOverride", "ResourceURL" }, "").get());
 
+            // Library URL
+            resetIfInvalid(m_settings->registerSetting("LibraryURLOverride", "").get());
+
             // Legacy FML libs URL
             resetIfInvalid(m_settings->registerSetting("LegacyFMLLibsURLOverride", "").get());
         }
