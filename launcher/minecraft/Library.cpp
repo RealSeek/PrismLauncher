@@ -165,7 +165,8 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
     bool local = isLocal();
 
     // Snapshot the library mirror base URL once for consistent rewriting
-    const QString mirrorBase = normalizeBaseUrl(APPLICATION->settings()->get("LibraryURLOverride").toString());
+    const auto app = APPLICATION_DYN;
+    const QString mirrorBase = app ? normalizeBaseUrl(app->settings()->get("LibraryURLOverride").toString()) : QString();
 
     // Lambda function to check if a local file exists
     auto check_local_file = [overridePath, &failedLocalFiles](QString storage) {
