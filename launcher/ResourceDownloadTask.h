@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include "net/NetJob.h"
+#include "tasks/MultipleOptionsTask.h"
 #include "tasks/SequentialTask.h"
 
 #include "minecraft/mod/tasks/LocalResourceUpdateTask.h"
@@ -48,7 +48,7 @@ class ResourceDownloadTask : public SequentialTask {
     ModPlatform::IndexedVersion m_pack_version;
     ResourceFolderModel* m_pack_model;
 
-    NetJob::Ptr m_filesNetJob;
+    shared_qobject_ptr<MultipleOptionsTask> m_downloadTask;
     LocalResourceUpdateTask::Ptr m_update_task;
 
     void downloadProgressChanged(qint64 current, qint64 total);
