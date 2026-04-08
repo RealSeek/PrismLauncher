@@ -871,6 +871,26 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv)
 
             // Legacy FML libs URL
             resetIfInvalid(m_settings->registerSetting("LegacyFMLLibsURLOverride", "").get());
+
+            // Mirror root URL (e.g. BMCLAPI root for full URL rewriting)
+            resetIfInvalid(m_settings->registerSetting("MirrorRootURL", "").get());
+
+            // Migrate: if MirrorRootURL is empty but LibraryURLOverride looks like BMCLAPI,
+            // auto-populate MirrorRootURL for backward compatibility.
+            {
+                QString mirrorRoot = m_settings->get("MirrorRootURL").toString();
+                QString libraryUrl = m_settings->get("LibraryURLOverride").toString().trimmed();
+                if (mirrorRoot.isEmpty() && !libraryUrl.isEmpty()) {
+                    // Strip trailing slash for comparison
+                    QString normalized = libraryUrl;
+                    if (normalized.endsWith('/'))
+                        normalized.chop(1);
+                    if (normalized == QStringLiteral("https://bmclapi2.bangbang93.com/maven")) {
+                        m_settings->set("MirrorRootURL", QStringLiteral("https://bmclapi2.bangbang93.com/"));
+                        qDebug() << "Migrated LibraryURLOverride to MirrorRootURL: https://bmclapi2.bangbang93.com/";
+                    }
+                }
+            }
         }
 
         m_settings->registerSetting("MetaRefreshOnLaunch", true);

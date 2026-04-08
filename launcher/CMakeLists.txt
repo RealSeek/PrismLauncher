@@ -70,6 +70,9 @@ set(CORE_SOURCES
     FileSystem.h
     FileSystem.cpp
 
+    # Download mirror URL rewriting utilities
+    MirrorUtils.h
+
     Exception.h
 
     # RW lock protected map

@@ -39,6 +39,7 @@
 
 #include <BuildConfig.h>
 #include <FileSystem.h>
+#include <MirrorUtils.h>
 #include <net/ApiDownload.h>
 #include <net/ChecksumValidator.h>
 
@@ -51,26 +52,30 @@ namespace {
  */
 QString normalizeBaseUrl(const QString& url)
 {
-    QString result = url.trimmed();
-    if (!result.isEmpty() && !result.endsWith('/')) {
-        result += '/';
-    }
-    return result;
+    return MirrorUtils::normalizeUrl(url);
 }
 
 /**
- * @brief Rewrite a library download URL using the given mirror base.
- *
- * Only rewrites URLs that match known official Minecraft/Forge/Fabric/NeoForge
- * library prefixes. Unknown URLs are returned unchanged.
+ * @brief Rewrite a library download URL using the mirror root.
+ * Delegates to MirrorUtils::rewriteUrl for the actual prefix matching.
  */
-QString rewriteLibraryUrl(const QString& url, const QString& mirrorBase)
+QString rewriteLibraryUrl(const QString& url, const QString& mirrorRoot)
 {
-    if (mirrorBase.isEmpty()) {
+    return MirrorUtils::rewriteUrl(url, mirrorRoot);
+}
+
+/**
+ * @brief Legacy rewrite: simple prefix-strip replacement for backward compatibility.
+ *
+ * Used when MirrorRootURL is not set but LibraryURLOverride is.
+ * Strips known library URL prefixes and replaces with the given base URL.
+ */
+QString legacyRewriteLibraryUrl(const QString& url, const QString& libraryBase)
+{
+    if (libraryBase.isEmpty()) {
         return url;
     }
 
-    // Known official library/maven/download URL prefixes
     static const QStringList knownPrefixes = {
         QStringLiteral("https://libraries.minecraft.net/"),
         QStringLiteral("https://maven.minecraftforge.net/"),
@@ -83,10 +88,9 @@ QString rewriteLibraryUrl(const QString& url, const QString& mirrorBase)
 
     for (const auto& prefix : knownPrefixes) {
         if (url.startsWith(prefix)) {
-            return mirrorBase + url.mid(prefix.size());
+            return libraryBase + url.mid(prefix.size());
         }
     }
-
     return url;
 }
 
@@ -164,9 +168,14 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
     bool stale = isAlwaysStale();
     bool local = isLocal();
 
-    // Snapshot the library mirror base URL once for consistent rewriting
+    // Snapshot the mirror root URL once for consistent rewriting.
+    // MirrorRootURL is the BMCLAPI-style root (e.g. "https://bmclapi2.bangbang93.com/"),
+    // sub-paths like /libraries/ and /maven/ are appended by rewriteLibraryUrl().
+    // Falls back to LibraryURLOverride for backward compatibility with custom mirrors.
     const auto app = APPLICATION_DYN;
-    const QString mirrorBase = app ? normalizeBaseUrl(app->settings()->get("LibraryURLOverride").toString()) : QString();
+    const QString mirrorRoot = app ? normalizeBaseUrl(app->settings()->get("MirrorRootURL").toString()) : QString();
+    const QString legacyLibraryBase =
+        (mirrorRoot.isEmpty() && app) ? normalizeBaseUrl(app->settings()->get("LibraryURLOverride").toString()) : QString();
 
     // Lambda function to check if a local file exists
     auto check_local_file = [overridePath, &failedLocalFiles](QString storage) {
@@ -182,11 +191,18 @@ QList<Net::NetRequest::Ptr> Library::getDownloads(const RuntimeContext& runtimeC
     };
 
     // Lambda function to add a download request
-    auto add_download = [this, local, check_local_file, cache, stale, &out, &mirrorBase](QString storage, QString url, QString sha1) {
+    auto add_download = [this, local, check_local_file, cache, stale, &out, &mirrorRoot,
+                         &legacyLibraryBase](QString storage, QString url, QString sha1) {
         if (local) {
             return check_local_file(storage);
         }
-        url = rewriteLibraryUrl(url, mirrorBase);
+        // Try MirrorRootURL first (BMCLAPI-style with sub-path mapping),
+        // fall back to legacy LibraryURLOverride (simple prefix-strip).
+        if (!mirrorRoot.isEmpty()) {
+            url = rewriteLibraryUrl(url, mirrorRoot);
+        } else if (!legacyLibraryBase.isEmpty()) {
+            url = legacyRewriteLibraryUrl(url, legacyLibraryBase);
+        }
         auto entry = cache->resolveEntry("libraries", storage);
         if (stale) {
             entry->setStale(true);
