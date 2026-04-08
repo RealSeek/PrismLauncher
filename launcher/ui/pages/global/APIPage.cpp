@@ -55,6 +55,7 @@
 #include "tools/BaseProfiler.h"
 
 namespace {
+static const QString BMCLAPI_ROOT = QStringLiteral("https://bmclapi2.bangbang93.com/");
 static const QString BMCLAPI_ASSETS = QStringLiteral("https://bmclapi2.bangbang93.com/assets/");
 static const QString BMCLAPI_MAVEN = QStringLiteral("https://bmclapi2.bangbang93.com/maven/");
 }  // namespace
@@ -227,6 +228,16 @@ void APIPage::applySettings()
     s->set("ResourceURLOverride", resourceURL.toString());
     s->set("LibraryURLOverride", libraryURL.toString());
     s->set("LegacyFMLLibsURLOverride", fmlLibsURL.toString());
+
+    // Save MirrorRootURL based on current preset
+    QString preset = ui->mirrorPreset->currentData().toString();
+    if (preset == QStringLiteral("bmclapi")) {
+        s->set("MirrorRootURL", BMCLAPI_ROOT);
+    } else if (preset == QStringLiteral("default")) {
+        s->set("MirrorRootURL", "");
+    }
+    // "custom" — keep MirrorRootURL as-is (user may have set it manually)
+
     QString flameKey = ui->flameKey->text();
     s->set("FlameKeyOverride", flameKey);
     QString modrinthToken = ui->modrinthToken->text();

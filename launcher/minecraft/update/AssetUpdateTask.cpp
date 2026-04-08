@@ -1,6 +1,7 @@
 #include "AssetUpdateTask.h"
 
 #include "BuildConfig.h"
+#include "MirrorUtils.h"
 #include "launch/LaunchStep.h"
 #include "minecraft/AssetsUtils.h"
 #include "minecraft/MinecraftInstance.h"
@@ -22,7 +23,7 @@ void AssetUpdateTask::executeTask()
     auto components = m_inst->getPackProfile();
     auto profile = components->getProfile();
     auto assets = profile->getMinecraftAssets();
-    QUrl indexUrl = assets->url;
+    QUrl indexUrl = MirrorUtils::rewriteUrl(QUrl(assets->url), APPLICATION->settings()->get("MirrorRootURL").toString());
     QString localPath = assets->id + ".json";
     auto job = makeShared<NetJob>(tr("Asset index for %1").arg(m_inst->name()), APPLICATION->network());
 

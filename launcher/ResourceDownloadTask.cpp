@@ -24,6 +24,7 @@
 #include "Application.h"
 
 #include "FileSystem.h"
+#include "MirrorUtils.h"
 #include "minecraft/MinecraftInstance.h"
 #include "minecraft/PackProfile.h"
 #include "minecraft/mod/ResourceFolderModel.h"
@@ -33,6 +34,7 @@
 #include "modplatform/helpers/HashUtils.h"
 #include "net/ApiRequest.h"
 #include "net/ChecksumValidator.h"
+#include "net/NetJob.h"
 
 namespace {
 Net::ModrinthDownloadMeta createModrinthMeta(MinecraftInstance* instance, QString reason, QString dependentOn)
@@ -66,45 +68,57 @@ ResourceDownloadTask::ResourceDownloadTask(ModPlatform::IndexedPack::Ptr pack,
         addTask(m_update_task);
     }
 
-    m_filesNetJob.reset(new NetJob(tr("Resource download"), APPLICATION->network()));
-    m_filesNetJob->setStatus(tr("Downloading resource:\n%1").arg(m_pack_version.downloadUrl));
-
-    auto action = Net::ApiRequest::makeFile(
-        m_pack_version.downloadUrl, m_pack_model->dir().absoluteFilePath(getFilename()), Net::Request::Option::NoOptions,
-        createModrinthMeta(m_pack_model->instance(), std::move(downloadReason), std::move(dependentOn)));
-    if (!m_pack_version.hashType.isEmpty() && !m_pack_version.hash.isEmpty()) {
-        switch (Hashing::algorithmFromString(m_pack_version.hashType)) {
-            case Hashing::Algorithm::Md4:
-                action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Md4, m_pack_version.hash));
-                break;
-            case Hashing::Algorithm::Md5:
-                action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Md5, m_pack_version.hash));
-                break;
-            case Hashing::Algorithm::Sha1:
-                action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha1, m_pack_version.hash));
-                break;
-            case Hashing::Algorithm::Sha256:
-                action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha256, m_pack_version.hash));
-                break;
-            case Hashing::Algorithm::Sha512:
-                action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha512, m_pack_version.hash));
-                break;
-            default:
-                break;
-        }
+    m_downloadTask = makeShared<MultipleOptionsTask>(tr("Resource download"));
+    const auto meta = createModrinthMeta(m_pack_model->instance(), std::move(downloadReason), std::move(dependentOn));
+    QList<QUrl> urls{ m_pack_version.downloadUrl };
+    const auto mirrorUrl = MirrorUtils::modFallbackUrl(m_pack_version.downloadUrl,
+                                                      APPLICATION->settings()->get("MirrorRootURL").toString());
+    if (!mirrorUrl.isEmpty()) {
+        urls.append(mirrorUrl);
     }
-    m_filesNetJob->addNetAction(action);
-    connect(m_filesNetJob.get(), &NetJob::succeeded, this, &ResourceDownloadTask::downloadSucceeded);
-    connect(m_filesNetJob.get(), &NetJob::progress, this, &ResourceDownloadTask::downloadProgressChanged);
-    connect(m_filesNetJob.get(), &NetJob::stepProgress, this, &ResourceDownloadTask::propagateStepProgress);
-    connect(m_filesNetJob.get(), &NetJob::failed, this, &ResourceDownloadTask::downloadFailed);
 
-    addTask(m_filesNetJob);
+    for (const auto& url : urls) {
+        auto job = makeShared<NetJob>(tr("Resource download"), APPLICATION->network());
+        job->setStatus(tr("Downloading resource:\n%1").arg(url.toString()));
+        // Try the mirror before asking the user to retry the failed download.
+        job->setAskRetry(url == urls.last());
+        auto action = Net::ApiRequest::makeFile(url, m_pack_model->dir().absoluteFilePath(getFilename()),
+                                              Net::Request::Option::NoOptions, meta);
+        if (!m_pack_version.hashType.isEmpty() && !m_pack_version.hash.isEmpty()) {
+            switch (Hashing::algorithmFromString(m_pack_version.hashType)) {
+                case Hashing::Algorithm::Md4:
+                    action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Md4, m_pack_version.hash));
+                    break;
+                case Hashing::Algorithm::Md5:
+                    action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Md5, m_pack_version.hash));
+                    break;
+                case Hashing::Algorithm::Sha1:
+                    action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha1, m_pack_version.hash));
+                    break;
+                case Hashing::Algorithm::Sha256:
+                    action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha256, m_pack_version.hash));
+                    break;
+                case Hashing::Algorithm::Sha512:
+                    action->addValidator(new Net::ChecksumValidator(QCryptographicHash::Algorithm::Sha512, m_pack_version.hash));
+                    break;
+                default:
+                    break;
+            }
+        }
+        job->addNetAction(action);
+        connect(job.get(), &NetJob::progress, this, &ResourceDownloadTask::downloadProgressChanged);
+        connect(job.get(), &NetJob::stepProgress, this, &ResourceDownloadTask::propagateStepProgress);
+        m_downloadTask->addTask(job);
+    }
+    connect(m_downloadTask.get(), &Task::succeeded, this, &ResourceDownloadTask::downloadSucceeded);
+    connect(m_downloadTask.get(), &Task::failed, this, &ResourceDownloadTask::downloadFailed);
+
+    addTask(m_downloadTask);
 }
 
 void ResourceDownloadTask::downloadSucceeded()
 {
-    m_filesNetJob.reset();
+    m_downloadTask.reset();
     auto oldName = std::get<0>(to_delete);
     auto oldFilename = std::get<1>(to_delete);
 
@@ -131,7 +145,7 @@ void ResourceDownloadTask::downloadSucceeded()
 
 void ResourceDownloadTask::downloadFailed(QString reason)
 {
-    m_filesNetJob.reset();
+    m_downloadTask.reset();
     emitFailed(std::move(reason));
 }
 
