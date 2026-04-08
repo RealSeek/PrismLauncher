@@ -66,6 +66,9 @@ set(CORE_SOURCES
     FileSystem.h
     FileSystem.cpp
 
+    # Download mirror URL rewriting utilities
+    MirrorUtils.h
+
     Result.h
     Handle.h
 
